@@ -58,6 +58,53 @@ spec:
     initdb:
       database: app
       owner: app
+  # WAL を書くそばから Garage へ送り続ける。これがあるので「任意の時点」へ戻せる（PITR）
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: sandbox-backup
+---
+# バックアップの置き場所。鍵（Secret backup-s3）は infra/garage/grant.sh が置く。Git には入れない
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: sandbox-backup
+  namespace: db-sandbox
+spec:
+  retentionPolicy: "7d"
+  configuration:
+    # 実際の保存先は s3://cnpg-backups/sandbox/（クラスタ名が自動で付く）
+    destinationPath: s3://cnpg-backups/
+    endpointURL: http://garage.garage.svc:3900
+    s3Credentials:
+      accessKeyId: { name: backup-s3, key: ACCESS_KEY_ID }
+      secretAccessKey: { name: backup-s3, key: ACCESS_SECRET_KEY }
+    wal:
+      compression: gzip
+    data:
+      compression: gzip
+  # Postgres の Pod に相乗りする送信係（サイドカー）の上限。Quota の内側に収める
+  instanceSidecarConfiguration:
+    resources:
+      requests: { memory: 64Mi, cpu: 20m }
+      limits: { memory: 256Mi }
+---
+# 毎日 JST 03:00 にベースバックアップ。作成直後にも1回取る
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: sandbox-daily
+  namespace: db-sandbox
+spec:
+  schedule: "0 0 18 * * *"   # 秒 分 時 日 月 曜日（UTC）
+  immediate: true
+  backupOwnerReference: self
+  cluster:
+    name: sandbox
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
 ---
 # 機体の外（Mac・スマホ）から繋ぐ入口。primary だけに向ける。
 # 将来は Traefik の HostSNI でポート1つに集約する（README のロードマップ 6）。
