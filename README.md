@@ -25,13 +25,25 @@
 
 ## 使い方
 
+まっさらなクラスタに建てるとき（手で流すのはこの2本だけ）:
+
 ```bash
 mise install                              # helm / kubectl
-infra/cnpg-operator/install.sh diff       # 何が入るか見る
-infra/cnpg-operator/install.sh            # operator を入れる
-kubectl apply -f databases/sandbox.yaml   # DB を1つ作る
-kubectl -n db-sandbox get cluster         # STATUS が "Cluster in healthy state" になるまで待つ
+infra/cnpg-operator/install.sh            # operator（`diff` を付けると中身を見るだけ）
+bootstrap/argocd/install.sh               # Argo CD と、databases/ を見張る Application
 ```
+
+DB を作る・消すのは **Git だけ**。`kubectl apply` は使わない（Argo CD が Git の状態に戻してしまう）。
+
+```bash
+cp databases/sandbox.yaml databases/foo.yaml   # 中の sandbox を foo に置換、nodePort を空きに変える
+git add databases/foo.yaml && git commit -m "db: foo を作る" && git push
+# → 数分以内に db-foo ができる。ファイルを消して push すると DB ごと消える（データも）
+```
+
+Argo CD の画面: `http://192.168.0.240/argocd`（外出先は `http://100.78.118.56/argocd`）。
+ユーザー `admin`、パスワードは
+`kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`。
 
 接続情報（パスワードは CNPG が生成する）:
 
@@ -48,8 +60,8 @@ kubectl -n db-sandbox get secret sandbox-app -o jsonpath='{.data.password}' | ba
 
 | 段階 | 内容 | 学ぶこと |
 |---|---|---|
-| **1** | CNPG で Postgres を1つ建て、Mac から繋ぐ | Operator と CRD |
-| 2 | Argo CD を入れ、`databases/` を GitOps にする | GitOps |
+| ~~1~~ | CNPG で Postgres を1つ建て、Mac から繋ぐ | Operator と CRD |
+| ~~2~~ | Argo CD を入れ、`databases/` を GitOps にする | GitOps |
 | 3 | cert-manager + Barman Cloud Plugin + Garage で定期バックアップ。消して復元する訓練 | バックアップと DR |
 | 4 | Go で `hdb` CLI / API（create / list / delete / connect） | API 設計、client-go |
 | 5 | ブランチ（PITR で複製）、プラン（Quota の型）、テナント分離（NetworkPolicy） | マルチテナント |

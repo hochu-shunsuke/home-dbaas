@@ -9,6 +9,6 @@
 | cert-manager | — | — | — | 段階3で入れる（Barman Cloud Plugin の前提） |
 | Barman Cloud Plugin | v0.15.1 予定 | `cnpg-system` | — | 段階3 |
 | Garage | — | — | — | 段階3（S3 互換。MinIO は使わない → ADR 0003） |
-| Argo CD | v3.5.x 予定 | `argocd` | — | 段階2（`bootstrap/`） |
+| Argo CD | v3.5.5（chart 10.10.3） | `argocd` | `../bootstrap/argocd/install.sh` | 導入済み |
 
 バージョンを上げるときは、この表とスクリプト内の `CHART_VERSION` を同じコミットで直す。

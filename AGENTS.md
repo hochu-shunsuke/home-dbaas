@@ -12,6 +12,7 @@ hochu-ubuntu-1 の k3s 上に作る、学習用の Postgres DB クラウド。�
 - Traefik・StorageClass・CoreDNS などクラスタ全体の設定を、このリポジトリから書き換えない
 - DB の namespace には ResourceQuota と LimitRange を必ず付ける
 - パスワード・鍵を Git に入れない。DB のパスワードは CNPG が生成する `<cluster>-app` Secret から読む
+- `databases/` は Git 経由でだけ変える（`kubectl apply` すると Argo CD が戻す）
 - 適用の前に差分を見る（`infra/*/install.sh diff`、`kubectl diff -f`）。適用したら、README の「検証」にある疎通確認をやり直す
 
 ## ツール
