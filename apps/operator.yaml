@@ -1,0 +1,22 @@
+# 自作の Operator（Database CRD とコントローラ）。中身は operator/config/default（kustomize）。
+# イメージのタグは CI が operator/config/manager/kustomization.yaml に書き戻す。
+# CNPG と Barman の CRD を監視するので、それらの後（wave 1）。databases/ の Database より前。
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/hochu-shunsuke/home-dbaas.git
+    targetRevision: main
+    path: operator/config/default
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
+    retry: { limit: 10, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
