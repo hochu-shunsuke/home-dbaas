@@ -68,7 +68,9 @@ kubectl -n db-sandbox get secret sandbox-app -o jsonpath='{.data.password}' | ba
 | 6 | Traefik の Postgres STARTTLS + HostSNI で、ポート1つ・ホスト名で全 DB に入れる | L4 ルーティング、TLS |
 | 7 | 監視（CNPG の PodMonitor + Grafana）、Valkey を足してマルチエンジン化 | 観測、拡張性 |
 
-## 検証済み（段階1・2026-10-13）
+## 検証済み
+
+### 段階1（2026-10-13）
 
 | 確認 | 結果 |
 |---|---|
@@ -78,6 +80,19 @@ kubectl -n db-sandbox get secret sandbox-app -o jsonpath='{.data.password}' | ba
 | Mac（自宅 LAN）→ `192.168.0.240:30432` | **未確認**（自宅に戻ったら試す） |
 | `kubectl delete -f` → namespace・PV とも消える → `apply` で再作成 | OK |
 | 使用メモリ（アイドル時） | operator 30Mi、Postgres 1台 49Mi |
+
+### 段階2（2026-10-13）
+
+| 確認 | 結果 |
+|---|---|
+| 手で作った `sandbox` を Argo CD が引き取る | Synced / Healthy。Pod は作り直されない |
+| `databases/demo.yaml` を push → DB ができる | push から約3分20秒で healthy（Argo CD の既定ポーリング 120s + 揺らぎ） |
+| `kubectl delete svc demo-external`（手で壊す） | 3秒で Argo CD が戻した（selfHeal） |
+| `demo.yaml` を消して push | 約3分で namespace・PV とも消えた（prune）。`sandbox` は無傷 |
+| Argo CD の画面 `/argocd`（LAN の IP・tailnet の IP・Mac から tailnet） | すべて 200 |
+| Argo CD の使用メモリ（アイドル時） | 合計 272Mi（うち application-controller 190Mi） |
+
+### 補足
 
 `kubectl wait --for=condition=Ready` が通った直後の数秒は、NodePort が `Connection refused` になる。
 primary のラベルが Pod に付くのが Ready より少し遅いため。少し待てば繋がる。
