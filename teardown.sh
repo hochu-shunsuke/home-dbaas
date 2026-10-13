@@ -8,9 +8,9 @@
 # k3s の外に足したもの（このリポジトリ・mise のツール・gh のログイン）は README の「撤収」を見る。
 set -euo pipefail
 
-NAMESPACES=(argocd garage cnpg-system cert-manager)
+NAMESPACES=(argocd dbaas-system garage cnpg-system cert-manager)
 # クラスタ全体に置かれるもの（CRD・権限・webhook）は名前で拾う
-PATTERN='cnpg|barman|cert-manager|argocd|argoproj'
+PATTERN='cnpg|barman|cert-manager|argocd|argoproj|dbaas|home-dbaas'
 
 db_ns=$(kubectl get ns -l app.kubernetes.io/part-of=home-dbaas -o name)
 cluster_scoped() {
@@ -21,6 +21,8 @@ kube_system() {
   kubectl -n kube-system get role,rolebinding,lease -o name | grep -E "$PATTERN" || true
 }
 
+dbs=$(kubectl get databases.dbaas.hochu.dev -o name 2>/dev/null || true)
+echo "== Database（Operator が後片付けする）"; echo "${dbs:-（なし）}"
 echo "== DB の namespace"; echo "${db_ns:-（なし）}"
 echo "== 部品の namespace"; printf '%s\n' "${NAMESPACES[@]}"
 echo "== クラスタ全体のリソース"; cluster_scoped | sed 's/^/  /'
@@ -33,14 +35,18 @@ echo "== kube-system に置かれたもの"; kube_system | sed 's/^/  /'
 kubectl -n argocd delete applications.argoproj.io --all --ignore-not-found --wait=false || true
 kubectl -n argocd scale statefulset,deployment --all --replicas=0 2>/dev/null || true
 
-# 2. DB を消す。CNPG operator が生きているうちに消す。
+# 2. Database を消す。自作 Operator が生きているうちに消さないと、finalizer
+#    （namespace → Garage のバケットとキーの後片付け）が誰にも外されず、永久に消えない
+if [[ -n "$dbs" ]]; then kubectl delete $dbs --wait=true --timeout=600s; fi
+
+# 3. 残った DB の namespace を消す。CNPG operator が生きているうちに消す。
 #    PVC は Postgres の Pod が完全に止まるまで消えない（pvc-protection）ので、数分かかることがある
 if [[ -n "$db_ns" ]]; then kubectl delete $db_ns --wait=true --timeout=600s; fi
 
-# 3. 部品の namespace（中の Pod・PVC・Secret ごと）
+# 4. 部品の namespace（中の Pod・PVC・Secret ごと）
 kubectl delete ns "${NAMESPACES[@]}" --ignore-not-found --wait=true --timeout=600s
 
-# 4. クラスタ全体に残るもの。CRD を消すと、その種類のリソースもすべて消える
+# 5. クラスタ全体に残るもの。CRD を消すと、その種類のリソースもすべて消える
 cluster_scoped | xargs -r kubectl delete --ignore-not-found
 kube_system | xargs -r kubectl -n kube-system delete --ignore-not-found
 

@@ -21,38 +21,56 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+// Plan は DB の大きさの型。メモリとディスクの上限がまとめて決まる。
+// +kubebuilder:validation:Enum=small;medium
+type Plan string
 
-// DatabaseSpec defines the desired state of Database
+const (
+	PlanSmall  Plan = "small"
+	PlanMedium Plan = "medium"
+)
+
+// DatabaseSpec は利用者が書く「欲しい DB」。
 type DatabaseSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of Database. Edit database_types.go to remove/update
+	// plan は作成後に変えられない。local-path のディスクは後から広げられないため。
+	// +kubebuilder:default=small
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="plan は作成後に変更できない"
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Plan Plan `json:"plan,omitempty"`
+
+	// backup が true なら、専用バケットと専用キーを発行し、WAL の継続アーカイブと毎日のバックアップを行う。
+	// +kubebuilder:default=true
+	// +optional
+	Backup *bool `json:"backup,omitempty"`
 }
 
-// DatabaseStatus defines the observed state of Database.
+// DatabaseStatus は Operator が書き込む「いまの DB」。
 type DatabaseStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// phase は CNPG の Cluster の状態をそのまま写したもの。
+	// +optional
+	Phase string `json:"phase,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// namespace は DB の中身が置かれる namespace（db-<name>）。
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 
-	// conditions represent the current state of the Database resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// nodePort は機体の外から繋ぐポート。k8s が空きを選ぶ。
+	// +optional
+	NodePort int32 `json:"nodePort,omitempty"`
+
+	// credentialsSecret はアプリ用ユーザーの接続情報が入った Secret の名前（namespace は status.namespace）。
+	// +optional
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
+
+	// bucket はこの DB 専用のバックアップ置き場。
+	// +optional
+	Bucket string `json:"bucket,omitempty"`
+
+	// observedGeneration は status が反映している spec の世代。
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// conditions の Ready が True なら、DB に接続できる。
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -61,23 +79,33 @@ type DatabaseStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:resource:scope=Cluster,shortName=db
+// +kubebuilder:printcolumn:name="Plan",type=string,JSONPath=`.spec.plan`
+// +kubebuilder:printcolumn:name="Port",type=integer,JSONPath=`.status.nodePort`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// バケット名（db-<name>-<uid 8桁>）が S3 の上限 63 文字に収まるように、名前を短く制限する。
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 40",message="名前は40文字以内"
 
-// Database is the Schema for the databases API
+// Database は「Postgres を1つ貸してほしい」という依頼。
+// クラスタ全体のリソースで、1つにつき namespace を1つ丸ごと持つ。
 type Database struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// metadata is a standard object metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of Database
 	// +required
 	Spec DatabaseSpec `json:"spec"`
 
-	// status defines the observed state of Database
 	// +optional
 	Status DatabaseStatus `json:"status,omitzero"`
+}
+
+// BackupEnabled は spec.backup の既定値（true）を含めて解釈する。
+func (d *Database) BackupEnabled() bool {
+	return d.Spec.Backup == nil || *d.Spec.Backup
 }
 
 // +kubebuilder:object:root=true

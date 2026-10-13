@@ -1,2 +1,7 @@
 resources:
 - manager.yaml
+# newTag は CI（.github/workflows/operator.yaml）がイメージを push したあとに書き換えて commit する
+images:
+- name: controller
+  newName: ghcr.io/hochu-shunsuke/home-dbaas-operator
+  newTag: sha-0000000
