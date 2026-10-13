@@ -33,11 +33,12 @@ echo "== kube-system に置かれたもの"; kube_system | sed 's/^/  /'
 kubectl -n argocd delete applications.argoproj.io --all --ignore-not-found --wait=false || true
 kubectl -n argocd scale statefulset,deployment --all --replicas=0 2>/dev/null || true
 
-# 2. DB を消す。CNPG operator が生きているうちに消さないと、Cluster の finalizer が外れず止まる
-[[ -n "$db_ns" ]] && kubectl delete $db_ns --wait=true --timeout=180s
+# 2. DB を消す。CNPG operator が生きているうちに消す。
+#    PVC は Postgres の Pod が完全に止まるまで消えない（pvc-protection）ので、数分かかることがある
+if [[ -n "$db_ns" ]]; then kubectl delete $db_ns --wait=true --timeout=600s; fi
 
 # 3. 部品の namespace（中の Pod・PVC・Secret ごと）
-kubectl delete ns "${NAMESPACES[@]}" --ignore-not-found --wait=true --timeout=300s
+kubectl delete ns "${NAMESPACES[@]}" --ignore-not-found --wait=true --timeout=600s
 
 # 4. クラスタ全体に残るもの。CRD を消すと、その種類のリソースもすべて消える
 cluster_scoped | xargs -r kubectl delete --ignore-not-found
