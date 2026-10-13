@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Argo CD を入れる / 更新する。ここだけは手で流す。以降の変更は Git 経由。
+# まっさらな k3s に home-dbaas を建てる。手で流すのはこれ1本だけ。
+# Argo CD を入れて root（app-of-apps）を渡すと、あとは Argo CD が apps/ を sync-wave 順に建てる。
 #
 #   ./install.sh        # 適用
 #   ./install.sh diff   # 何が作られるかだけ見る（クラスタには触らない）
@@ -13,12 +14,11 @@ helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/nul
 if [[ "${1:-}" == "diff" ]]; then
   helm template argocd argo/argo-cd \
     --namespace argocd --version "$CHART_VERSION" -f values.yaml
-  cat ingress.yaml ../databases.yaml
+  cat ../root.yaml
   exit 0
 fi
 
 helm upgrade --install argocd argo/argo-cd \
   --namespace argocd --create-namespace \
   --version "$CHART_VERSION" -f values.yaml --wait
-kubectl apply -f ingress.yaml
-kubectl apply -f ../databases.yaml
+kubectl apply -f ../root.yaml

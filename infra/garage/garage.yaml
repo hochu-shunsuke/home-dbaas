@@ -1,10 +1,6 @@
 # Garage（S3 互換ストレージ）を1台だけ動かす。Helm chart を使わず素のマニフェストで書いている。
-# 秘密（rpc_secret・admin_token）は install.sh が Secret garage-secrets として作る。Git には入れない。
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: garage
----
+# 秘密（rpc_secret・admin_token）は bootstrap.yaml の Job がクラスタの中で生成する。Git には入れない。
+# namespace は Argo CD が作る（apps/garage.yaml の CreateNamespace）。
 apiVersion: v1
 kind: ConfigMap
 metadata:

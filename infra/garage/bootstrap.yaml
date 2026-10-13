@@ -1,0 +1,206 @@
+# Garage を「Git だけから」建てるための初期化。手で打っていた install.sh の置き換え。
+#
+#   wave -2  権限と Python スクリプト
+#   wave -1  garage-secrets Job … 秘密をクラスタの中で生成する（初回だけ。既にあれば何もしない）
+#   wave  0  Garage 本体（garage.yaml）
+#   PostSync garage-setup Job   … 管理 API でレイアウト・バケット・キーを用意する（何度流しても同じ）
+#
+# 秘密はクラスタの中で生まれ、外に出ない。Git にもログにも載らない。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: garage-bootstrap
+  namespace: garage
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+---
+# Secret を「作る」ことだけ許す。読めない・消せない
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: garage-bootstrap
+  namespace: garage
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: garage-bootstrap
+  namespace: garage
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: garage-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: garage-bootstrap
+    namespace: garage
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: garage-bootstrap
+  namespace: garage
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+data:
+  secrets.py: |
+    # Secret garage-secrets を作る。既にあれば（409）そのまま残す。作り直すと既存データが読めなくなるため。
+    import base64, json, secrets, ssl, urllib.error, urllib.request
+
+    SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+    token = open(f"{SA}/token").read()
+    ns = open(f"{SA}/namespace").read()
+    b64 = lambda s: base64.b64encode(s.encode()).decode()
+
+    body = {
+        "apiVersion": "v1", "kind": "Secret",
+        "metadata": {"name": "garage-secrets"},
+        "data": {
+            "rpc_secret": b64(secrets.token_hex(32)),
+            "admin_token": b64(secrets.token_urlsafe(32)),
+        },
+    }
+    req = urllib.request.Request(
+        f"https://kubernetes.default.svc/api/v1/namespaces/{ns}/secrets",
+        data=json.dumps(body).encode(), method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        urllib.request.urlopen(req, context=ssl.create_default_context(cafile=f"{SA}/ca.crt"))
+        print("garage-secrets: created")
+    except urllib.error.HTTPError as e:
+        if e.code != 409:
+            raise
+        print("garage-secrets: already exists, kept")
+
+  setup.py: |
+    # レイアウト（容量の割り当て）・バケット・キーを用意する。何度流しても同じ結果になる。
+    # 秘密鍵は表示しない。DB の namespace へ渡すのは grant.sh（段階5で Operator に置き換える）。
+    import json, os, time, urllib.error, urllib.parse, urllib.request
+
+    API = "http://garage.garage.svc:3903/v2/"
+    TOKEN = os.environ["GARAGE_ADMIN_TOKEN"]
+    BUCKET, KEY, ZONE = "cnpg-backups", "cnpg", "home"
+    CAPACITY = 20 * 1000**3   # garage CLI の "20G" と同じ（表示は 18.6 GiB）
+
+    def call(op, body=None, **query):
+        url = API + op + ("?" + urllib.parse.urlencode(query) if query else "")
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method="POST" if data else "GET",
+                                     headers={"Authorization": f"Bearer {TOKEN}",
+                                              "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            raw = r.read()
+            return json.loads(raw) if raw else None
+
+    def find(op, **query):
+        try:
+            return call(op, **query)
+        except urllib.error.HTTPError as e:
+            if e.code in (400, 404):
+                return None
+            raise
+
+    for _ in range(30):   # 起動直後は管理 API がまだ応答しないことがある
+        try:
+            status = call("GetClusterStatus")
+            break
+        except (urllib.error.URLError, ConnectionError):
+            time.sleep(2)
+    else:
+        raise SystemExit("Garage の管理 API に繋がらない")
+
+    layout = call("GetClusterLayout")
+    if layout["roles"]:
+        print(f"layout: already assigned (version {layout['version']})")
+    else:
+        node = status["nodes"][0]["id"]
+        call("UpdateClusterLayout", {"roles": [
+            {"id": node, "zone": ZONE, "capacity": CAPACITY, "tags": []}]})
+        call("ApplyClusterLayout", {"version": layout["version"] + 1})
+        print(f"layout: assigned {node[:16]} zone={ZONE}")
+
+    bucket = find("GetBucketInfo", globalAlias=BUCKET)
+    if bucket is None:
+        bucket = call("CreateBucket", {"globalAlias": BUCKET})
+        print(f"bucket: created {BUCKET}")
+    else:
+        print(f"bucket: {BUCKET} exists")
+
+    key = find("GetKeyInfo", search=KEY)
+    if key is None:
+        key = call("CreateKey", {"name": KEY})   # 応答に秘密鍵が含まれるが、表示しない
+        print(f"key: created {KEY}")
+    else:
+        print(f"key: {KEY} exists")
+
+    call("AllowBucketKey", {"bucketId": bucket["id"], "accessKeyId": key["accessKeyId"],
+                            "permissions": {"read": True, "write": True, "owner": True}})
+    print(f"key: {KEY} -> {BUCKET} read/write/owner")
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: garage-secrets
+  namespace: garage
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: garage-bootstrap
+      restartPolicy: Never
+      containers:
+        - name: secrets
+          image: python:3.14.8-alpine3.24
+          command: [python3, /scripts/secrets.py]
+          volumeMounts:
+            - { name: scripts, mountPath: /scripts }
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 64Mi }
+      volumes:
+        - name: scripts
+          configMap: { name: garage-bootstrap }
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: garage-setup
+  namespace: garage
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      # 管理 API を叩くだけなので k8s の権限は要らない。トークンも自動マウントしない
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: setup
+          image: python:3.14.8-alpine3.24
+          command: [python3, /scripts/setup.py]
+          env:
+            - name: GARAGE_ADMIN_TOKEN
+              valueFrom: { secretKeyRef: { name: garage-secrets, key: admin_token } }
+          volumeMounts:
+            - { name: scripts, mountPath: /scripts }
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 64Mi }
+      volumes:
+        - name: scripts
+          configMap: { name: garage-bootstrap }

@@ -1,0 +1,22 @@
+# databases/ を見張る。ファイルを足す・消す・直す → push → 数分以内にクラスタへ反映される。
+# CNPG・plugin・Garage が揃ってから動くように最後の wave にする。
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: databases
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/hochu-shunsuke/home-dbaas.git
+    targetRevision: main
+    path: databases
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true      # Git から消えた DB はクラスタからも消す（データごと）
+      selfHeal: true   # kubectl で手で変えても Git の状態に戻す
+    retry: { limit: 10, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }

@@ -1,0 +1,21 @@
+# Garage（S3 互換ストレージ）。中身は infra/garage/ の素のマニフェスト。
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: garage
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/hochu-shunsuke/home-dbaas.git
+    targetRevision: main
+    path: infra/garage
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: garage
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]
+    retry: { limit: 10, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }

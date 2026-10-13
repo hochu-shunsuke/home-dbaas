@@ -1,6 +1,4 @@
 # cmd
 
-段階4で Go のコントロールプレーンを置く。
-
-- `cmd/hdb/` — CLI（`hdb create / list / delete / connect`）
-- `cmd/api/` — API。DB の作成依頼を受けて `databases/` 相当のリソースを作る
+段階5で Operator を置く。`Database` CRD を見張り、namespace・Quota・CNPG の Cluster・
+バックアップ設定・DB ごとの Garage 鍵・外部用 Service を作り続ける。

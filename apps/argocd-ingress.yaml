@@ -1,0 +1,21 @@
+# Argo CD の画面を Traefik の /argocd に出す Ingress。Argo CD 本体は bootstrap で helm から入れる。
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-ingress
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/hochu-shunsuke/home-dbaas.git
+    targetRevision: main
+    path: bootstrap/argocd
+    directory:
+      include: ingress.yaml   # 同じ場所の values.yaml はマニフェストではないので読ませない
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }

@@ -8,38 +8,46 @@
 本物のクラウド（RDS や Neon）と同じく、2層に分ける。
 
 ```
-コントロールプレーン（自作）   DB の払い出し・一覧・削除・ブランチ       cmd/  databases/
+コントロールプレーン（自作）   DB の払い出し・一覧・削除・ブランチ       cmd/（段階5） databases/
         │ Cluster を作る
 データプレーン（CloudNativePG）  Postgres の起動・フェイルオーバー・バックアップ
 ```
 
 | ディレクトリ | 中身 |
 |---|---|
-| `infra/` | 入れたもの（CNPG operator など）。バージョン固定 |
+| `bootstrap/` | 手で流すのはここだけ。Argo CD と、`apps/` を束ねる root |
+| `apps/` | Argo CD の Application。部品1つ = ファイル1枚（app-of-apps） |
+| `infra/` | 入れたものの設定（Helm の values、Garage の素のマニフェスト）。バージョン固定 |
 | `databases/` | 作ったもの。DB 1つ = ファイル1枚 |
-| `bootstrap/` | Argo CD の導入（段階2） |
-| `cmd/` | `hdb` CLI と API（段階4） |
+| `cmd/` | Operator（段階5） |
 | `docs/decisions/` | 設計判断の記録（ADR） |
 
 汎用の基盤にはしていない。理由は [ADR 0001](docs/decisions/0001-service-specific.md)。
+これは常設の環境ではなく、学習のための一回きりの構築。影響は hochu-ubuntu-1 の中に閉じる
+（クラウドのサービスは使わない。GitHub はリポジトリ置き場としてだけ使う）。
 
 ## 使い方
 
-まっさらなクラスタに建てるとき（手で流すのはこれだけ。どれも `diff` を付けると中身を見るだけ）:
+まっさらな k3s に建てる（手で流すのはこの1本だけ）:
 
 ```bash
-mise install                              # helm / kubectl
-infra/cnpg-operator/install.sh            # Postgres operator
-infra/cert-manager/install.sh             # 証明書（↓の前提）
-infra/barman-cloud/install.sh             # バックアップ用プラグイン
-infra/garage/install.sh                   # S3 互換ストレージ + バケット cnpg-backups
-bootstrap/argocd/install.sh               # Argo CD と、databases/ を見張る Application
+mise install                    # helm / kubectl
+bootstrap/argocd/install.sh     # `diff` を付けると中身を見るだけ
 ```
 
-DB を作る前に、その namespace へバックアップ用の鍵を置く（鍵は Git に入れない）:
+Argo CD が `apps/` を次の順に建てる。前の wave が Healthy になるまで次へ進まない。
+
+| wave | 部品 |
+|---|---|
+| 0 | cert-manager、CNPG operator、Garage（秘密の生成 → 本体 → レイアウト・バケット・キー）、Argo CD の Ingress |
+| 1 | Barman Cloud Plugin（cert-manager と operator が前提） |
+| 2 | `databases/` |
+
+秘密はクラスタの中で生成され、Git にもログにも出ない。
+ただし DB の namespace へバックアップ用の鍵を渡す所だけは、まだ手作業（段階5で Operator に置き換える）:
 
 ```bash
-kubectl create namespace db-foo && infra/garage/grant.sh db-foo
+infra/garage/grant.sh db-sandbox   # namespace ができてから流す
 ```
 
 DB を作る・消すのは **Git だけ**。`kubectl apply` は使わない（Argo CD が Git の状態に戻してしまう）。
@@ -65,19 +73,43 @@ kubectl -n db-sandbox get secret sandbox-app -o jsonpath='{.data.password}' | ba
 | 自宅 LAN | `postgresql://app:<pw>@192.168.0.240:30432/app?sslmode=require` |
 | 外出先（tailnet） | `postgresql://app:<pw>@100.78.118.56:30432/app?sslmode=require` |
 
+## 撤収
+
+k3s の中（DB のデータ・バックアップも消える。k3s 本体は残る）:
+
+```bash
+./teardown.sh          # 消す対象の一覧だけ
+./teardown.sh --yes    # 実際に消す
+```
+
+k3s の外に足したもの:
+
+| もの | 消し方 |
+|---|---|
+| このリポジトリ | `rm -rf ~/src/home-dbaas` |
+| mise のツール（helm・kubectl） | `mise uninstall helm kubectl`（このディレクトリの `mise.toml` で入れたもの） |
+| gh のログイン | `gh auth logout` |
+| git の認証ヘルパー設定 | `git config --global --unset-all credential.https://github.com.helper` と `credential.https://gist.github.com.helper` |
+| GitHub のリポジトリ | `gh repo delete hochu-shunsuke/home-dbaas` |
+
 ## ロードマップ
 
 | 段階 | 内容 | 学ぶこと |
 |---|---|---|
 | ~~1~~ | CNPG で Postgres を1つ建て、Mac から繋ぐ | Operator と CRD |
 | ~~2~~ | Argo CD を入れ、`databases/` を GitOps にする | GitOps |
-| ~~3~~ | cert-manager + Barman Cloud Plugin + Garage で定期バックアップ。消して復元する訓練 | バックアップと DR |
-| 4 | Go で `hdb` CLI / API（create / list / delete / connect） | API 設計、client-go |
-| 5 | ブランチ（PITR で複製）、プラン（Quota の型）、テナント分離（NetworkPolicy） | マルチテナント |
-| 6 | Traefik の Postgres STARTTLS + HostSNI で、ポート1つ・ホスト名で全 DB に入れる | L4 ルーティング、TLS |
-| 7 | 監視（CNPG の PodMonitor + Grafana）、Valkey を足してマルチエンジン化 | 観測、拡張性 |
+| ~~3~~ | cert-manager + Barman Cloud Plugin + Garage で定期バックアップ。PITR の復元訓練 | バックアップと PITR |
+| **4** | 部品も Argo CD で入れる（app-of-apps）。秘密をクラスタ内で生成。撤収スクリプト。撤収 → 再構築の総合試験 | 「1本で建つ・1本で消える」 |
+| 5 | Operator: `Database` CRD。DB ごとの Garage 鍵（テナント分離）、プラン、ポートの自動割り当て、finalizer | k8s の中身 |
+| 6 | Operator の機能としてブランチ（`spec.from`）と、Traefik の HostSNI でポート1つの入口 | クラウドらしさ |
+| 7（任意） | 観測（Prometheus + Grafana、Operator 自身のメトリクス） | 監視 |
 
-## 検証済み（段階1・2026-10-13）
+機体の外へのバックアップはしない（一回きりの構築で、影響を機体の中に閉じるため）。
+Garage のバックアップは機体の保護ではなく、PITR・ブランチを提供する製品の機能として持つ。
+
+## 検証済み
+
+### 段階1（2026-10-13）
 
 | 確認 | 結果 |
 |---|---|

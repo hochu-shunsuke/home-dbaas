@@ -1,0 +1,24 @@
+# Barman Cloud Plugin。CNPG operator と同じ cnpg-system に入れる決まり。
+# cert-manager と operator が先に要るので wave 1。
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: barman-cloud
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: plugin-barman-cloud
+    targetRevision: 0.8.1   # = plugin-barman-cloud v0.15.1
+    helm:
+      releaseName: plugin-barman-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ServerSideApply=true]
+    retry: { limit: 10, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }

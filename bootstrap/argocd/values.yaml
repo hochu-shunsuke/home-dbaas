@@ -11,6 +11,20 @@ configs:
     server.insecure: true     # TLS は付けない（入口は LAN と tailnet だけ。tailnet は経路が暗号化済み）
     server.rootpath: /argocd  # http://<IP>/argocd で開く。ホスト名（DNS）を用意しなくて済む
     server.basehref: /argocd
+  cm:
+    # Argo CD は既定では子の Application の健康状態を見ない（v1.8 で外された）。
+    # これが無いと app-of-apps の sync-wave が「前の wave が建ち終わるのを待つ」にならない。
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil and obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
 
 controller:
   resources:
