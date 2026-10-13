@@ -25,12 +25,21 @@
 
 ## 使い方
 
-まっさらなクラスタに建てるとき（手で流すのはこの2本だけ）:
+まっさらなクラスタに建てるとき（手で流すのはこれだけ。どれも `diff` を付けると中身を見るだけ）:
 
 ```bash
 mise install                              # helm / kubectl
-infra/cnpg-operator/install.sh            # operator（`diff` を付けると中身を見るだけ）
+infra/cnpg-operator/install.sh            # Postgres operator
+infra/cert-manager/install.sh             # 証明書（↓の前提）
+infra/barman-cloud/install.sh             # バックアップ用プラグイン
+infra/garage/install.sh                   # S3 互換ストレージ + バケット cnpg-backups
 bootstrap/argocd/install.sh               # Argo CD と、databases/ を見張る Application
+```
+
+DB を作る前に、その namespace へバックアップ用の鍵を置く（鍵は Git に入れない）:
+
+```bash
+kubectl create namespace db-foo && infra/garage/grant.sh db-foo
 ```
 
 DB を作る・消すのは **Git だけ**。`kubectl apply` は使わない（Argo CD が Git の状態に戻してしまう）。
@@ -62,15 +71,13 @@ kubectl -n db-sandbox get secret sandbox-app -o jsonpath='{.data.password}' | ba
 |---|---|---|
 | ~~1~~ | CNPG で Postgres を1つ建て、Mac から繋ぐ | Operator と CRD |
 | ~~2~~ | Argo CD を入れ、`databases/` を GitOps にする | GitOps |
-| 3 | cert-manager + Barman Cloud Plugin + Garage で定期バックアップ。消して復元する訓練 | バックアップと DR |
+| ~~3~~ | cert-manager + Barman Cloud Plugin + Garage で定期バックアップ。消して復元する訓練 | バックアップと DR |
 | 4 | Go で `hdb` CLI / API（create / list / delete / connect） | API 設計、client-go |
 | 5 | ブランチ（PITR で複製）、プラン（Quota の型）、テナント分離（NetworkPolicy） | マルチテナント |
 | 6 | Traefik の Postgres STARTTLS + HostSNI で、ポート1つ・ホスト名で全 DB に入れる | L4 ルーティング、TLS |
 | 7 | 監視（CNPG の PodMonitor + Grafana）、Valkey を足してマルチエンジン化 | 観測、拡張性 |
 
-## 検証済み
-
-### 段階1（2026-10-13）
+## 検証済み（段階1・2026-10-13）
 
 | 確認 | 結果 |
 |---|---|
@@ -91,6 +98,19 @@ kubectl -n db-sandbox get secret sandbox-app -o jsonpath='{.data.password}' | ba
 | `demo.yaml` を消して push | 約3分で namespace・PV とも消えた（prune）。`sandbox` は無傷 |
 | Argo CD の画面 `/argocd`（LAN の IP・tailnet の IP・Mac から tailnet） | すべて 200 |
 | Argo CD の使用メモリ（アイドル時） | 合計 272Mi（うち application-controller 190Mi） |
+
+### 段階3（2026-10-13）
+
+| 確認 | 結果 |
+|---|---|
+| WAL の継続アーカイブ（sandbox → Garage） | `Continuous archiving is working`。path-style・region の追加設定は不要だった |
+| 手動バックアップ | 6秒で完了、4.1MiB |
+| **PITR 復元訓練**: `before` → T=06:11:37Z → `after` の順に挿入し、T へ戻した別 DB を作る | 復元先には `before` だけ。`after` は無い。Argo CD が拾ってから約1分20秒 |
+| 使用メモリ（アイドル時） | Garage 5Mi、cert-manager 計70Mi、plugin 19Mi、サイドカー 17Mi。機体全体 35% |
+
+既存の DB にバックアップを後付けすると、`ScheduledBackup` の `immediate` が
+サイドカーの追加（Pod の再起動）より先に走り、`requested plugin is not available` で1回失敗する。
+再起動後に手で `Backup` を1つ作れば通る。新規の DB では起きない見込み。
 
 ### 補足
 
