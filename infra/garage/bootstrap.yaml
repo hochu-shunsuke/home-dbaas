@@ -51,7 +51,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-2"
 data:
-  secrets.py: |
+  gen_secrets.py: |
     # Secret garage-secrets を作る。既にあれば（409）そのまま残す。作り直すと既存データが読めなくなるため。
     import base64, json, secrets, ssl, urllib.error, urllib.request
 
@@ -164,7 +164,7 @@ spec:
       containers:
         - name: secrets
           image: python:3.14.8-alpine3.24
-          command: [python3, /scripts/secrets.py]
+          command: [python3, -I, /scripts/gen_secrets.py]   # secrets.py という名前は標準ライブラリを隠すので避ける
           volumeMounts:
             - { name: scripts, mountPath: /scripts }
           resources:
@@ -192,7 +192,7 @@ spec:
       containers:
         - name: setup
           image: python:3.14.8-alpine3.24
-          command: [python3, /scripts/setup.py]
+          command: [python3, -I, /scripts/setup.py]
           env:
             - name: GARAGE_ADMIN_TOKEN
               valueFrom: { secretKeyRef: { name: garage-secrets, key: admin_token } }
