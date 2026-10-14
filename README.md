@@ -22,6 +22,8 @@
 | `cmd/` | Operator（段階5） |
 | `docs/decisions/` | 設計判断の記録（ADR） |
 
+**作業の現在地と再開手順は [docs/progress.md](docs/progress.md)。**
+
 汎用の基盤にはしていない。理由は [ADR 0001](docs/decisions/0001-service-specific.md)。
 これは常設の環境ではなく、学習のための一回きりの構築。影響は hochu-ubuntu-1 の中に閉じる
 （クラウドのサービスは使わない。GitHub はリポジトリ置き場としてだけ使う）。
